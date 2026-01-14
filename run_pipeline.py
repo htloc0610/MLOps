@@ -115,12 +115,24 @@ def houseprice_pipeline(
 
 def compile_pipeline():
     """Compile the pipeline to a JSON specification."""
+    import json
+    
     print("Compiling pipeline...")
     compiler.Compiler().compile(
         pipeline_func=houseprice_pipeline,
         package_path='houseprice_pipeline.json'
     )
-    print("✓ Pipeline compiled successfully to 'houseprice_pipeline.json'")
+    
+    try:
+        with open('houseprice_pipeline.json', 'r', encoding='utf-8') as f:
+            pipeline_spec = json.load(f)
+        
+        with open('houseprice_pipeline.json', 'w', encoding='utf-8') as f:
+            json.dump(pipeline_spec, f, ensure_ascii=True, indent=2)
+        
+        print("✓ Pipeline compiled and encoded successfully to 'houseprice_pipeline.json'")
+    except Exception as e:
+        print(f"✓ Pipeline compiled to 'houseprice_pipeline.json' (encoding warning: {e})")
 
 def run_pipeline():
     """Initialize Vertex AI and submit the pipeline job."""
