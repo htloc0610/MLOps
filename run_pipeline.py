@@ -86,12 +86,12 @@ def houseprice_pipeline(
     ingestion_task = data_ingestion(
         bucket_name=bucket_name,
         data_path=data_path
-    ).set_cpu_limit('1').set_memory_limit('2G')
+    ).set_cpu_limit('500m').set_memory_limit('2G')
     
     # Step 2: Preprocessing
     preprocessing_task = preprocessing(
         input_dataset=ingestion_task.outputs["dataset"]
-    ).set_cpu_limit('1').set_memory_limit('2G')
+    ).set_cpu_limit('500m').set_memory_limit('2G')
     
     # Step 3: Model Training
     training_task = training(
@@ -101,13 +101,13 @@ def houseprice_pipeline(
             "max_depth": MAX_DEPTH,
             "random_state": RANDOM_STATE
         }
-    ).set_cpu_limit('1').set_memory_limit('2G')
+    ).set_cpu_limit('500m').set_memory_limit('2G')
     
     # Step 4: Model Evaluation
     evaluation_task = evaluation(
         model=training_task.outputs["model"],
         preprocessed_dataset=preprocessing_task.outputs["preprocessed_dataset"]
-    ).set_cpu_limit('1').set_memory_limit('2G')
+    ).set_cpu_limit('500m').set_memory_limit('2G')
 
 # ============================================================================
 # PIPELINE COMPILATION AND EXECUTION
