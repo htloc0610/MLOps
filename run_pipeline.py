@@ -113,53 +113,6 @@ def houseprice_pipeline(
 # PIPELINE COMPILATION AND EXECUTION
 # ============================================================================
 
-def compile_pipeline():
-    """Compile the pipeline to a JSON specification."""
-    import json
-    import os
-    
-    def sanitize_string(s):
-        """Remove surrogate characters from string"""
-        if isinstance(s, str):
-            return s.encode('utf-8', errors='ignore').decode('utf-8', errors='ignore')
-        return s
-    
-    def sanitize_dict(obj):
-        """Recursively sanitize all strings in dict/list"""
-        if isinstance(obj, dict):
-            return {k: sanitize_dict(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [sanitize_dict(item) for item in obj]
-        elif isinstance(obj, str):
-            return sanitize_string(obj)
-        return obj
-    
-    # Delete old JSON file to ensure fresh compilation
-    if os.path.exists('houseprice_pipeline.json'):
-        os.remove('houseprice_pipeline.json')
-        print("Removed old pipeline JSON file")
-    
-    print("Compiling pipeline...")
-    compiler.Compiler().compile(
-        pipeline_func=houseprice_pipeline,
-        package_path='houseprice_pipeline.json'
-    )
-    
-    # Fix Unicode encoding issues by sanitizing and re-writing
-    try:
-        with open('houseprice_pipeline.json', 'r', encoding='utf-8', errors='ignore') as f:
-            pipeline_spec = json.load(f)
-        
-        # Sanitize all strings recursively
-        pipeline_spec = sanitize_dict(pipeline_spec)
-        
-        with open('houseprice_pipeline.json', 'w', encoding='utf-8') as f:
-            json.dump(pipeline_spec, f, ensure_ascii=True, indent=2)
-        
-        print("✓ Pipeline compiled and encoded successfully to 'houseprice_pipeline.json'")
-    except Exception as e:
-        print(f"✓ Pipeline compiled to 'houseprice_pipeline.json' (encoding warning: {e})")
-
 def run_pipeline():
     """Initialize Vertex AI and submit the pipeline job."""
     print(f"Initializing Vertex AI (Project: {PROJECT_ID}, Region: {REGION})...")
@@ -170,16 +123,17 @@ def run_pipeline():
     print("\nYou can monitor the pipeline execution in the GCP Console:")
     print(f"https://console.cloud.google.com/vertex-ai/pipelines?project={PROJECT_ID}")
     
-    # Create pipeline job from function
-    job = aiplatform.PipelineJob(
-        display_name="houseprice-pipeline-job",
-        template_path="houseprice_pipeline.json",
-        pipeline_root=PIPELINE_ROOT,
+    # Use from_pipeline_func which handles checking and compilation
+    # Note: pipeline_root is taken from the @pipeline decorator
+    job = aiplatform.PipelineJob.from_pipeline_func(
+        pipeline_func=houseprice_pipeline,
         parameter_values={
             'bucket_name': BUCKET_NAME,
             'data_path': DATA_PATH
         },
-        enable_caching=False
+        enable_caching=False,
+        project=PROJECT_ID,
+        location=REGION
     )
     
     print("\nSubmitting pipeline to Vertex AI...")
@@ -227,9 +181,6 @@ if __name__ == "__main__":
     print(f"  Dataset: gs://{BUCKET_NAME}/{DATA_PATH}")
     print("\n" + "=" * 70 + "\n")
     
-    # Compile the pipeline
-    compile_pipeline()
-    
-    # Run the pipeline
+    # Run the pipeline (compilation is handled internally)
     print("\nStarting pipeline execution...")
     run_pipeline()
