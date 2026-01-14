@@ -117,15 +117,35 @@ def compile_pipeline():
     """Compile the pipeline to a JSON specification."""
     import json
     
+    def sanitize_string(s):
+        """Remove surrogate characters from string"""
+        if isinstance(s, str):
+            return s.encode('utf-8', errors='ignore').decode('utf-8', errors='ignore')
+        return s
+    
+    def sanitize_dict(obj):
+        """Recursively sanitize all strings in dict/list"""
+        if isinstance(obj, dict):
+            return {k: sanitize_dict(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [sanitize_dict(item) for item in obj]
+        elif isinstance(obj, str):
+            return sanitize_string(obj)
+        return obj
+    
     print("Compiling pipeline...")
     compiler.Compiler().compile(
         pipeline_func=houseprice_pipeline,
         package_path='houseprice_pipeline.json'
     )
     
+    # Fix Unicode encoding issues by sanitizing and re-writing
     try:
-        with open('houseprice_pipeline.json', 'r', encoding='utf-8') as f:
+        with open('houseprice_pipeline.json', 'r', encoding='utf-8', errors='ignore') as f:
             pipeline_spec = json.load(f)
+        
+        # Sanitize all strings recursively
+        pipeline_spec = sanitize_dict(pipeline_spec)
         
         with open('houseprice_pipeline.json', 'w', encoding='utf-8') as f:
             json.dump(pipeline_spec, f, ensure_ascii=True, indent=2)
