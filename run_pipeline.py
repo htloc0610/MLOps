@@ -148,9 +148,10 @@ def run_pipeline():
         return s
     
     def sanitize_dict(obj):
-        """Recursively sanitize all strings in dict/list"""
+        """Recursively sanitize all strings in dict/list (keys and values)"""
         if isinstance(obj, dict):
-            return {k: sanitize_dict(v) for k, v in obj.items()}
+            # Sanitize keys AND values
+            return {sanitize_string(k): sanitize_dict(v) for k, v in obj.items()}
         elif isinstance(obj, list):
             return [sanitize_dict(item) for item in obj]
         elif isinstance(obj, str):
@@ -165,7 +166,7 @@ def run_pipeline():
         # Sanitize
         pipeline_spec = sanitize_dict(pipeline_spec)
         
-        # Save back cleaned JSON
+        # Save back cleaned JSON (just for reference/debugging)
         with open(pipeline_spec_path, 'w', encoding='utf-8') as f:
             json.dump(pipeline_spec, f, ensure_ascii=True, indent=2)
             
@@ -173,12 +174,18 @@ def run_pipeline():
         
     except Exception as e:
         print(f"WARNING: Sanitization failed: {e}")
+        # If sanitization fails, try to load it anyway or proceed with what we have
+        if 'pipeline_spec' not in locals():
+            with open(pipeline_spec_path, 'r') as f:
+                pipeline_spec = json.load(f)
 
     # 4. SUBMIT
     print("Creating and submitting pipeline job...")
+    
+    # Pass pipeline_spec directly to avoid re-reading file and re-encountering encoding issues
     job = aiplatform.PipelineJob(
         display_name="houseprice-pipeline-job",
-        template_path=pipeline_spec_path,
+        pipeline_spec=pipeline_spec,
         pipeline_root=PIPELINE_ROOT,
         parameter_values={
             'bucket_name': BUCKET_NAME,
