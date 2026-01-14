@@ -164,9 +164,10 @@ def run_pipeline():
     print("\nYou can monitor the pipeline execution in the GCP Console:")
     print(f"https://console.cloud.google.com/vertex-ai/pipelines?project={PROJECT_ID}")
     
-    # Use from_pipeline_func to avoid JSON encoding issues
-    job = aiplatform.PipelineJob.from_pipeline_func(
-        pipeline_func=houseprice_pipeline,
+    # Create pipeline job from function
+    job = aiplatform.PipelineJob(
+        display_name="houseprice-pipeline-job",
+        template_path="houseprice_pipeline.json",
         pipeline_root=PIPELINE_ROOT,
         parameter_values={
             'bucket_name': BUCKET_NAME,
@@ -176,9 +177,7 @@ def run_pipeline():
     )
     
     print("\nSubmitting pipeline to Vertex AI...")
-    job.submit(
-        service_account=None
-    )
+    job.submit(service_account=None)
     
     print("\n✓ Pipeline submitted successfully!")
     print(f"Pipeline name: {job.display_name}")
