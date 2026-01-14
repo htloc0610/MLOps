@@ -116,6 +116,7 @@ def houseprice_pipeline(
 def compile_pipeline():
     """Compile the pipeline to a JSON specification."""
     import json
+    import os
     
     def sanitize_string(s):
         """Remove surrogate characters from string"""
@@ -132,6 +133,11 @@ def compile_pipeline():
         elif isinstance(obj, str):
             return sanitize_string(obj)
         return obj
+    
+    # Delete old JSON file to ensure fresh compilation
+    if os.path.exists('houseprice_pipeline.json'):
+        os.remove('houseprice_pipeline.json')
+        print("Removed old pipeline JSON file")
     
     print("Compiling pipeline...")
     compiler.Compiler().compile(
