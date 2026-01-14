@@ -159,33 +159,29 @@ def run_pipeline():
     print(f"Initializing Vertex AI (Project: {PROJECT_ID}, Region: {REGION})...")
     aiplatform.init(project=PROJECT_ID, location=REGION)
     
-    print("Creating pipeline job...")
-    
-    # Submit pipeline directly without JSON file to avoid Unicode encoding issues
-    from kfp import compiler as kfp_compiler
-    
-    pipeline_job = aiplatform.PipelineJob(
-        display_name="houseprice-pipeline-job",
-        pipeline_root=PIPELINE_ROOT,
-        enable_caching=False
-    )
-    
-    print("Submitting pipeline job to Vertex AI...")
+    print("Creating and submitting pipeline job...")
     print(f"Pipeline artifacts will be stored at: {PIPELINE_ROOT}")
     print("\nYou can monitor the pipeline execution in the GCP Console:")
     print(f"https://console.cloud.google.com/vertex-ai/pipelines?project={PROJECT_ID}")
     
-    # Submit using pipeline function directly
-    pipeline_job.submit(
+    # Use from_pipeline_func to avoid JSON encoding issues
+    job = aiplatform.PipelineJob.from_pipeline_func(
         pipeline_func=houseprice_pipeline,
-        service_account=None,
-        pipeline_parameters={
+        pipeline_root=PIPELINE_ROOT,
+        parameter_values={
             'bucket_name': BUCKET_NAME,
             'data_path': DATA_PATH
-        }
+        },
+        enable_caching=False
+    )
+    
+    print("\nSubmitting pipeline to Vertex AI...")
+    job.submit(
+        service_account=None
     )
     
     print("\n✓ Pipeline submitted successfully!")
+    print(f"Pipeline name: {job.display_name}")
     print(f"View results at: {PIPELINE_ROOT}")
 
 # ============================================================================
