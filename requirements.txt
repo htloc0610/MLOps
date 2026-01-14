@@ -1,5 +1,4 @@
-# Python 3.12 compatible versions - use pre-built binaries
-kfp==1.8.22
+kfp==1.8.23
 google-cloud-aiplatform==1.42.1
 google-cloud-storage==2.14.0
 google-auth==2.27.0
