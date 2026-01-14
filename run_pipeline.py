@@ -115,14 +115,14 @@ def houseprice_pipeline(
 
 def run_pipeline():
     """Initialize Vertex AI and submit the pipeline job."""
-    import json
+    import yaml
     import os
     
     print(f"Initializing Vertex AI (Project: {PROJECT_ID}, Region: {REGION})...")
     aiplatform.init(project=PROJECT_ID, location=REGION)
     
-    # Define output spec path
-    pipeline_spec_path = 'houseprice_pipeline.json'
+    # Define output spec path - SWITCH TO YAML
+    pipeline_spec_path = 'houseprice_pipeline.yaml'
     
     # 1. CLEANUP: Delete old file
     if os.path.exists(pipeline_spec_path):
@@ -130,54 +130,21 @@ def run_pipeline():
         print(f"Removed old {pipeline_spec_path}")
 
     # 2. COMPILE
-    print("Compiling pipeline to JSON...")
+    print("Compiling pipeline to YAML...")
     compiler.Compiler().compile(
         pipeline_func=houseprice_pipeline,
         package_path=pipeline_spec_path
     )
     
-    # 3. SANITIZE (Fix Unicode Issues)
-    print("Sanitizing pipeline specification...")
-    
-    def sanitize_string(s):
-        """Remove surrogate characters from string explicitly"""
-        if isinstance(s, str):
-            # Explicitly filter out surrogate characters range U+D800 to U+DFFF
-            return "".join([c for c in s if not (0xD800 <= ord(c) <= 0xDFFF)])
-        return s
-    
-    def sanitize_dict(obj):
-        """Recursively sanitize all strings in dict/list (keys and values)"""
-        if isinstance(obj, dict):
-            # Sanitize keys AND values
-            return {sanitize_string(k): sanitize_dict(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [sanitize_dict(item) for item in obj]
-        elif isinstance(obj, str):
-            return sanitize_string(obj)
-        return obj
+    # Check if file exists
+    if not os.path.exists(pipeline_spec_path):
+        raise RuntimeError(f"Pipeline compilation failed to create {pipeline_spec_path}")
+        
+    print(f"✓ Pipeline compiled successfully to {pipeline_spec_path}")
 
-    try:
-        # Load JSON
-        with open(pipeline_spec_path, 'r', encoding='utf-8') as f:
-            pipeline_spec = json.load(f)
-        
-        # Sanitize
-        pipeline_spec = sanitize_dict(pipeline_spec)
-        
-        # Save back cleaned JSON
-        with open(pipeline_spec_path, 'w', encoding='utf-8') as f:
-            json.dump(pipeline_spec, f, ensure_ascii=True, indent=2)
-            
-        print("✓ Pipeline specification sanitized successfully")
-        
-    except Exception as e:
-        print(f"WARNING: Sanitization failed: {e}")
-
-    # 4. SUBMIT
+    # 3. SUBMIT
     print("Creating and submitting pipeline job...")
     
-    # Revert to using template_path as pipeline_spec is not supported in this SDK version
     job = aiplatform.PipelineJob(
         display_name="houseprice-pipeline-job",
         template_path=pipeline_spec_path,
