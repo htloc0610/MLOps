@@ -14,9 +14,9 @@ Before running:
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-from kfp import compiler
+from kfp.v2 import compiler
 from google.cloud import aiplatform
-from kfp.dsl import pipeline
+from kfp.v2.dsl import pipeline
 
 # Import component functions
 from src.data_ingestion import data_ingestion
