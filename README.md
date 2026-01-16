@@ -1,199 +1,423 @@
-# Vertex AI Pipeline - House Price Prediction
+# 🏠 MLOps Pipeline - House Price Prediction (Local Version)
 
-Complete implementation of a Vertex AI pipeline for house price prediction using the Kubeflow Pipelines SDK.
+## 📋 Tổng Quan
 
-## 📋 Project Structure
+Pipeline ML hoàn chỉnh để dự đoán giá nhà, chạy **100% LOCAL** - không cần Google Cloud Platform.
 
-```
-house_prediction/
-├── Dockerfile              # Base image for pipeline components
-├── requirements.txt        # Python dependencies
-├── .env.example           # Environment variable template
-├── run_pipeline.py        # Main pipeline orchestration script
-├── SETUP.md              # Detailed setup instructions
-└── src/                  # Pipeline components
-    ├── __init__.py
-    ├── data_ingestion.py    # Load data from GCS
-    ├── preprocessing.py     # Clean and transform data
-    ├── training.py         # Train RandomForest model
-    └── evaluation.py       # Evaluate and visualize results
-```
+### ✨ Tính Năng
+
+- ✅ **Modular Architecture**: 4 components độc lập (Ingestion → Preprocessing → Training → Evaluation)
+- ✅ **Local Execution**: Chạy trực tiếp trên máy tính hoặc trong Docker
+- ✅ **No Cloud Dependencies**: Không cần GCP, AWS, hay cloud nào khác
+- ✅ **Comprehensive Metrics**: MSE, RMSE, MAE, R², MAPE
+- ✅ **Visualizations**: Plots tự động (Actual vs Predicted, Residuals, Feature Importance)
+- ✅ **Easy Configuration**: Environment variables qua `.env` file
+
+---
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### Option 1: Chạy Trực Tiếp với Python
 
-1. **Google Cloud Platform Setup**
-   - Active GCP project with billing enabled
-   - Vertex AI API enabled
-   - gcloud CLI installed and authenticated
-   - Docker Desktop installed and running
+# 1. Cài dependencies
+pip install -r requirements.txt
 
-2. **Required GCP Resources**
-   - GCS bucket created
-   - Artifact Registry repository created
-   - Proper IAM permissions configured
+# 2. Đảm bảo có dataset
+# Đặt Housing.csv vào data/
+# Cách 1: Docker Compose
+docker-compose up
 
-### Step 1: Configure Environment
+# Cách 2: Docker CLI
+docker build -t mlops-pipeline .
+docker run --rm -v %cd%/data:/app/data:ro -v %cd%/output:/app/output mlops-pipeline
 
-1. Copy the environment template:
-   ```bash
-   cp .env.example .env
-   ```
+---
 
-2. The `.env` file is already configured with your GCP project details:
-   - ✅ `PROJECT_ID=project-1cd612d2-3ea2-4818-a72`
-   - ✅ `REGION=us-central1`
-   - ✅ `BUCKET_NAME=housing-data-project-1cd612d2-3ea2-4818-a72`
-   - ✅ `REPOSITORY=mlops-repo`
-   - ✅ `IMAGE_NAME=training-image`
+## 📁 Cấu Trúc Project
 
-3. You can modify hyperparameters in `.env` if needed:
-   ```bash
-   N_ESTIMATORS=100
-   MAX_DEPTH=10
-   RANDOM_STATE=42
-   ```
-
-### Step 2: Upload Dataset
-
-Download the [Housing Prices Dataset](https://www.kaggle.com/datasets/yasserh/housing-prices-dataset) and upload to GCS:
-
-```bash
-gsutil cp Housing.csv gs://YOUR_BUCKET_NAME/data/
+```
+MLOps/
+├── 📂 data/                    # Dataset directory
+│   └── Housing.csv             # Input dataset
+│
+├── 📂 src/                     # Pipeline components (modular)
+│   ├── data_ingestion.py       # Load data
+│   ├── preprocessing.py        # Clean, transform, split
+│   ├── training.py             # Train Random Forest
+│   ├── evaluation.py           # Evaluate & visualize
+│   └── __init__.py             # Package exports
+│
+├── 📂 output/                  # Results (auto-generated)
+│   ├── models/
+│   │   └── model.pkl           # Trained model
+│   ├── metrics/
+│   │   └── metrics_*.json      # Evaluation metrics
+│   ├── artifacts/
+│   │   ├── scaler.pkl          # Feature scaler
+│   │   ├── predictions.csv     # Predictions
+│   │   └── feature_importance.json
+│   └── plots/
+│       └── evaluation_plots.png # Visualizations
+│
+├── 🐳 Dockerfile               # Docker image definition
+├── 🐳 docker-compose.yml       # Docker Compose config
+│
+├── ⚙️ .env.example             # Configuration template
+├── 📦 requirements.txt         # Python dependencies
+│
+└── 📖 README.md                # This file
 ```
 
-### Step 3: Build and Push Docker Image
+---
+
+## ⚙️ Cấu Hình
+
+### Environment Variables (`.env`)
 
 ```bash
-# Set environment variables
-export PROJECT_ID="your-project-id"
-export REGION="europe-west1"
-export REPOSITORY="vertex-ai-pipeline-example"
-export IMAGE_NAME="training"
-export IMAGE_TAG="latest"
+# Model hyperparameters
+N_ESTIMATORS=100        # Number of trees
+MAX_DEPTH=10            # Tree depth
+RANDOM_STATE=42         # Random seed
 
-# Create Artifact Registry repository
-gcloud artifacts repositories create $REPOSITORY \
-    --repository-format=docker \
-    --location=$REGION \
-    --description="Repository for Vertex AI pipeline components"
-
-# Configure Docker authentication
-gcloud auth configure-docker $REGION-docker.pkg.dev
-
-# Build Docker image (for macOS, use --platform linux/amd64)
-docker build --platform linux/amd64 -t $IMAGE_NAME:$IMAGE_TAG .
-
-# Tag image for Artifact Registry
-docker tag $IMAGE_NAME:$IMAGE_TAG \
-    $REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE_NAME:$IMAGE_TAG
-
-# Push to Artifact Registry
-docker push $REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE_NAME:$IMAGE_TAG
+# Data split
+TEST_SIZE=0.2           # 20% for testing
 ```
 
-### Step 4: Run the Pipeline
+**Tùy chỉnh:**
+```bash
+# Train với model mạnh hơn
+N_ESTIMATORS=200
+MAX_DEPTH=15
+```
 
+---
+
+## 📊 Pipeline Workflow
+
+```mermaid
+graph LR
+    A[Data Ingestion] --> B[Preprocessing]
+    B --> C[Training]
+    C --> D[Evaluation]
+    
+    A -->|Housing.csv| A1[Load & Validate]
+    B -->|Clean Data| B1[Handle Missing]
+    B1 --> B2[Encode Categories]
+    B2 --> B3[Scale Features]
+    B3 --> B4[Train/Test Split]
+    C -->|Random Forest| C1[Fit Model]
+    D -->|Metrics| D1[MSE, RMSE, MAE, R²]
+    D1 --> D2[Visualizations]
+```
+
+### Step-by-Step
+
+**1. Data Ingestion**
+- Load `Housing.csv` từ `data/`
+- Validate dataset (shape, columns, missing values)
+
+**2. Preprocessing**
+- Fill missing values (median for numerics)
+- Encode categorical variables (label encoding)
+- Split train/test (80/20)
+- Scale features (StandardScaler)
+
+**3. Training**
+- Train Random Forest Regressor
+- Hyperparameters từ `.env`
+- Log training metrics
+
+**4. Evaluation**
+- Calculate metrics: MSE, RMSE, MAE, R², MAPE
+- Generate plots:
+  - Actual vs Predicted
+  - Residual plot
+  - Feature importance
+  - Residual distribution
+- Save all results to `output/`
+
+---
+
+## 📈 Kết Quả Output
+
+### Metrics JSON
+```json
+{
+  "mse": 1234.56,
+  "rmse": 35.13,
+  "mae": 25.42,
+  "r2_score": 0.8523,
+  "mape": 12.34
+}
+```
+
+### Predictions CSV
+```csv
+actual,predicted,error,absolute_error,percentage_error
+450000,445000,5000,5000,1.11
+520000,518000,2000,2000,0.38
+...
+```
+
+### Visualizations
+- `evaluation_plots.png`: 4 plots in 1 figure
+  - Actual vs Predicted scatter
+  - Residual plot
+  - Top 10 feature importance
+  - Residual distribution
+
+---
+
+## 🔧 Advanced Usage
+
+### 1. Customize Hyperparameters
+
+**Via `.env`:**
+```bash
+N_ESTIMATORS=500
+MAX_DEPTH=20
+MIN_SAMPLES_SPLIT=5
+```
+
+**Via Docker:**
+```bash
+docker run -e N_ESTIMATORS=200 -e MAX_DEPTH=15 mlops-pipeline
+```
+
+### 2. Use as Python Module
+
+```python
+from src import data_ingestion, preprocessing, training, evaluation
+
+# Load data
+df = data_ingestion('data/Housing.csv')
+
+# Preprocess
+X_train, X_test, y_train, y_test, scaler = preprocessing(df)
+
+# Train
+model = training(X_train, y_train, {'n_estimators': 100, 'max_depth': 10})
+
+# Evaluate
+metrics = evaluation(model, X_test, y_test, output_dir='output/plots')
+```
+
+### 3. Load Trained Model
+
+```python
+import pickle
+
+# Load model
+with open('output/models/model.pkl', 'rb') as f:
+    model = pickle.load(f)
+
+# Load scaler
+with open('output/artifacts/scaler.pkl', 'rb') as f:
+    scaler = pickle.load(f)
+
+# Predict on new data
+new_data_scaled = scaler.transform(new_data)
+predictions = model.predict(new_data_scaled)
+```
+
+---
+
+## 🐳 Docker
+
+### Build Image
+```bash
+docker build -t mlops-pipeline:latest .
+```
+
+### Run Container
+```bash
+docker run --rm \
+  -v %cd%/data:/app/data:ro \
+  -v %cd%/output:/app/output \
+  -e N_ESTIMATORS=200 \
+  mlops-pipeline:latest
+```
+
+### Docker Compose
+```bash
+# Start
+docker-compose up
+
+# Run in background
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop
+docker-compose down
+```
+
+Xem chi tiết: [DOCKER_GUIDE.md](DOCKER_GUIDE.md)
+
+---
+
+## 📚 Dependencies
+
+### Core ML
+- `pandas` - Data manipulation
+- `numpy` - Numerical computing
+- `scikit-learn` - ML algorithms & metrics
+
+### Visualization
+- `matplotlib` - Plotting
+- `seaborn` - Statistical visualizations
+
+### Utilities
+- `python-dotenv` - Environment variables
+
+**Tổng dung lượng:** ~150MB (với Docker image `python:3.9-slim`)
+
+---
+
+## ❓ Troubleshooting
+
+### ❌ "Dataset not found"
+```bash
+# Giải pháp 1: Download sample dataset
+python download_dataset.py
+
+# Giải pháp 2: Copy file của bạn
+mkdir data
+copy path\to\Housing.csv data\
+```
+
+### ❌ "Module not found: src"
+```bash
+# Đảm bảo chạy từ project root
+cd path\to\MLOps
+python run_pipeline.py
+```
+
+### ❌ Docker errors
+```bash
+# Kiểm tra Docker đang chạy
+docker info
+
+# Rebuild image (no cache)
+docker-compose build --no-cache
+```
+
+### ❌ Low R² score
+```bash
+# Tăng complexity của model
+N_ESTIMATORS=200
+MAX_DEPTH=15
+
+# Hoặc check data quality (missing values, outliers)
+```
+
+---
+
+## 🔄 Development Workflow
+
+### 1. Modify Code
+```bash
+# Sửa components trong src/
+vi src/training.py
+
+# Hoặc sửa main pipeline
+vi run_pipeline.py
+```
+
+### 2. Test Locally
 ```bash
 python run_pipeline.py
 ```
 
-Monitor the pipeline execution in the GCP Console:
-```
-https://console.cloud.google.com/vertex-ai/pipelines
-```
-
-## 📊 Pipeline Components
-
-### 1. Data Ingestion
-- Loads `Housing.csv` from GCS bucket
-- Validates data structure
-- Outputs dataset artifact
-
-### 2. Preprocessing
-- Handles missing values
-- Scales numerical features (StandardScaler)
-- Encodes categorical features (One-Hot Encoding)
-- Outputs preprocessed dataset
-
-### 3. Training
-- Trains RandomForestRegressor
-- Configurable hyperparameters
-- Logs training and validation metrics
-- Outputs trained model artifact
-
-### 4. Evaluation
-- Evaluates model performance
-- Generates visualizations:
-  - Actual vs Predicted prices
-  - Residual plot
-  - Feature importance
-  - Residual distribution
-- Creates HTML report with metrics
-
-## 📈 Expected Results
-
-After successful execution, you'll find:
-- **Pipeline artifacts** in `gs://YOUR_BUCKET/pipeline_root_houseprice/`
-- **Trained model** (joblib format)
-- **Evaluation metrics** (MSE, R², MAE, RMSE)
-- **HTML report** with visualizations
-- **Pipeline DAG** in Vertex AI console
-
-## 🧹 Cleanup
-
-To avoid unnecessary costs:
-
+### 3. Rebuild Docker (nếu cần)
 ```bash
-# Delete pipeline artifacts
-gsutil rm -r gs://YOUR_BUCKET/pipeline_root_houseprice/
-
-# Delete Docker image
-gcloud artifacts docker images delete \
-    $REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE_NAME:$IMAGE_TAG
-
-# Delete Artifact Registry repository
-gcloud artifacts repositories delete $REPOSITORY --location=$REGION
+docker-compose build
+docker-compose up
 ```
 
-## 🔒 Security Best Practices
+### 4. Check Results
+```bash
+# Xem metrics
+cat output/metrics/metrics_*.json
 
-This implementation follows OWASP security guidelines:
-- **Environment Variables**: All sensitive configuration stored in `.env` file (not committed to git)
-- **No Hardcoded Credentials**: Uses gcloud authentication and environment variables
-- Uses Google's mirror registry for base images
-- Proper IAM permission separation
-- Input validation in all components
-- Comprehensive error handling and logging
-- `.gitignore` configured to protect `.env` file
+# Xem plots
+start output/plots/evaluation_plots.png
+```
 
-## 📚 Additional Resources
+---
 
-- [Vertex AI Documentation](https://cloud.google.com/vertex-ai/docs)
-- [Kubeflow Pipelines SDK](https://www.kubeflow.org/docs/components/pipelines/)
-- [Housing Dataset](https://www.kaggle.com/datasets/yasserh/housing-prices-dataset)
+## 🎯 Performance Tips
 
-## ⚠️ Important Notes
+### 1. Faster Training
+```bash
+# Giảm số trees (trade-off: accuracy)
+N_ESTIMATORS=50
+MAX_DEPTH=8
+```
 
-- Ensure Docker Desktop is running before building images
-- macOS users must use `--platform linux/amd64` flag
-- Pipeline execution incurs GCP costs
-- Keep your GCP credentials secure
-- Review IAM permissions before running
+### 2. Better Accuracy
+```bash
+# Tăng complexity
+N_ESTIMATORS=200
+MAX_DEPTH=15
 
-## 🐛 Troubleshooting
+# Fine-tune advanced params
+MIN_SAMPLES_SPLIT=5
+MIN_SAMPLES_LEAF=2
+```
 
-**Error: "Failed to create pipeline job"**
-- Check IAM permissions for Vertex AI Service Agent
-- Verify Artifact Registry permissions
+### 3. Memory Optimization
+- Sử dụng smaller dataset cho testing
+- Reduce `N_ESTIMATORS` nếu RAM thấp
+- Close plots sau khi save trong evaluation
 
-**Error: "Dataset not found"**
-- Confirm dataset is uploaded to correct GCS path
-- Check bucket permissions
+---
 
-**Docker build fails**
-- Ensure Docker Desktop is running
-- Check internet connection for package downloads
+## 📖 Documentation
 
-For detailed setup instructions, see [SETUP.md](SETUP.md)
+- **Main README**: This file
+- **Docker Guide**: [DOCKER_GUIDE.md](DOCKER_GUIDE.md)
+- **Setup Guide**: [SETUP.md](SETUP.md) (for GCP version - reference only)
+
+---
+
+## ✅ Checklist
+
+### Before Running
+- [ ] Python 3.9+ installed (hoặc Docker Desktop)
+- [ ] `Housing.csv` trong `data/`
+- [ ] Dependencies installed (`pip install -r requirements.txt`)
+
+### After Running
+- [ ] Check `output/models/model.pkl` exists
+- [ ] Review `output/metrics/*.json`
+- [ ] View `output/plots/evaluation_plots.png`
+- [ ] Check `output/artifacts/predictions.csv`
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit changes (`git commit -m 'Add AmazingFeature'`)
+4. Push to branch (`git push origin feature/AmazingFeature`)
+5. Open Pull Request
+
+---
+
+## 📄 License
+
+MIT License - feel free to use and modify
+
+---
+
+## 👥 Authors
+
+MLOps Team
+
+---
+
+**🚀 Get Started:** `python run_pipeline.py` hoặc `run_docker.bat`

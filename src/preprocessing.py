@@ -1,85 +1,143 @@
-from kfp.v2.dsl import (
-    Dataset,
-    Input,
-    Output,
-    component,
-)
+"""
+Preprocessing Module - Local Version
 
-# Docker image from Artifact Registry
-BASE_IMAGE = "us-central1-docker.pkg.dev/project-1cd612d2-3ea2-4818-a72/mlops-repo/training-image:latest"
+This module handles data preprocessing including:
+- Missing value imputation
+- Categorical encoding
+- Feature scaling
+- Train/test splitting
+"""
 
-@component(
-    base_image=BASE_IMAGE,
-    output_component_file="preprocessing.yaml"
-)
+import pandas as pd
+import numpy as np
+import logging
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from typing import Tuple
+
+logger = logging.getLogger(__name__)
+
+
 def preprocessing(
-    input_dataset: Input[Dataset],
-    preprocessed_dataset: Output[Dataset],
-):
+    df: pd.DataFrame,
+    test_size: float = 0.2,
+    random_state: int = 42
+) -> Tuple[np.ndarray, np.ndarray, pd.Series, pd.Series, StandardScaler]:
     """
-    Preprocesses the dataset for training.
+    Preprocess the dataset for model training.
     
     Args:
-        input_dataset: Input dataset from the data ingestion step
-        preprocessed_dataset: Output artifact for the preprocessed dataset
-    """
-    import pandas as pd
-    from sklearn.preprocessing import StandardScaler
-    import logging
-    
-    try:
-        logging.info("Starting data preprocessing...")
+        df: Input DataFrame
+        test_size: Proportion of the dataset to include in the test split
+        random_state: Random seed for reproducibility
         
-        # Load the dataset
-        df = pd.read_csv(input_dataset.path)
-        logging.info(f"Loaded dataset with shape: {df.shape}")
+    Returns:
+        Tuple of (X_train, X_test, y_train, y_test, scaler)
+        
+    Raises:
+        ValueError: If preprocessing fails
+    """
+    try:
+        logger.info("Starting data preprocessing...")
+        logger.info(f"Input dataset shape: {df.shape}")
         
         # Check for missing values
         missing_values = df.isnull().sum()
         if missing_values.any():
-            logging.warning(f"Missing values found:\n{missing_values[missing_values > 0]}")
-            # Fill missing values with median for numerical columns
-            for col in df.select_dtypes(include=['float64', 'int64']).columns:
+            logger.warning(f"Missing values found:\n{missing_values[missing_values > 0]}")
+            
+            # Fill missing values in numerical columns with median
+            numeric_cols = df.select_dtypes(include=[np.number]).columns
+            for col in numeric_cols:
                 if df[col].isnull().any():
-                    df[col].fillna(df[col].median(), inplace=True)
-                    logging.info(f"Filled missing values in {col} with median")
+                    median_val = df[col].median()
+                    df[col].fillna(median_val, inplace=True)
+                    logger.info(f"  Filled missing values in '{col}' with median: {median_val:.2f}")
+        
+        # Identify target column
+        # Try common names first, then use last column
+        target_col = None
+        for col_name in ['price', 'Price', 'PRICE', 'target', 'Target']:
+            if col_name in df.columns:
+                target_col = col_name
+                break
+        
+        if target_col is None:
+            target_col = df.columns[-1]
+            logger.warning(f"Target column not found, using last column: '{target_col}'")
+        else:
+            logger.info(f"Target column identified: '{target_col}'")
         
         # Separate features and target
-        # Assuming 'price' is the target column (adjust if different)
-        if 'price' in df.columns:
-            target_col = 'price'
-        elif 'Price' in df.columns:
-            target_col = 'Price'
-        else:
-            # Use the last column as target if 'price' not found
-            target_col = df.columns[-1]
-            logging.warning(f"'price' column not found, using '{target_col}' as target")
-        
-        # Scale numerical features (excluding target)
         feature_cols = [col for col in df.columns if col != target_col]
+        X = df[feature_cols].copy()
+        y = df[target_col].copy()
         
-        # Only scale numerical columns
-        numerical_cols = df[feature_cols].select_dtypes(include=['float64', 'int64']).columns.tolist()
+        logger.info(f"Features: {len(feature_cols)} columns")
+        logger.info(f"Target: '{target_col}'")
         
-        if numerical_cols:
-            scaler = StandardScaler()
-            df[numerical_cols] = scaler.fit_transform(df[numerical_cols])
-            logging.info(f"Scaled {len(numerical_cols)} numerical features")
-        
-        # Handle categorical features if any
-        categorical_cols = df[feature_cols].select_dtypes(include=['object']).columns.tolist()
+        # Handle categorical features
+        categorical_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
         if categorical_cols:
-            logging.info(f"Found {len(categorical_cols)} categorical columns: {categorical_cols}")
-            # Simple one-hot encoding
-            df = pd.get_dummies(df, columns=categorical_cols, drop_first=True)
-            logging.info(f"Applied one-hot encoding. New shape: {df.shape}")
+            logger.info(f"Found {len(categorical_cols)} categorical columns: {categorical_cols}")
+            
+            # Simple label encoding for categorical variables
+            for col in categorical_cols:
+                X[col] = pd.Categorical(X[col]).codes
+                logger.info(f"  Encoded '{col}' to numeric")
         
-        # Save preprocessed dataset
-        df.to_csv(preprocessed_dataset.path, index=False)
-        logging.info(f"Preprocessed dataset saved to: {preprocessed_dataset.path}")
-        logging.info(f"Final shape: {df.shape}")
-        logging.info("Preprocessing completed successfully!")
+        # Get numerical columns only
+        numerical_cols = X.select_dtypes(include=[np.number]).columns.tolist()
+        logger.info(f"Numerical features: {len(numerical_cols)} columns")
+        
+        # Split into train and test sets
+        logger.info(f"Splitting data: {(1-test_size)*100:.0f}% train, {test_size*100:.0f}% test")
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, 
+            test_size=test_size, 
+            random_state=random_state
+        )
+        
+        logger.info(f"  Train set: {X_train.shape[0]} samples")
+        logger.info(f"  Test set: {X_test.shape[0]} samples")
+        
+        # Feature scaling (StandardScaler)
+        logger.info("Applying StandardScaler to features...")
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+        
+        logger.info(f"  Scaler fitted on {X_train.shape[1]} features")
+        logger.info(f"  Mean: {scaler.mean_[:3]}... (first 3 features)")
+        logger.info(f"  Std: {scaler.scale_[:3]}... (first 3 features)")
+        
+        logger.info("✓ Preprocessing completed successfully!")
+        
+        return X_train_scaled, X_test_scaled, y_train, y_test, scaler
         
     except Exception as e:
-        logging.error(f"Error during preprocessing: {str(e)}")
+        logger.error(f"Error during preprocessing: {str(e)}")
         raise
+
+
+def get_feature_names(df: pd.DataFrame, target_col: str = None) -> list:
+    """
+    Get list of feature names from DataFrame.
+    
+    Args:
+        df: Input DataFrame
+        target_col: Name of target column to exclude
+        
+    Returns:
+        List of feature column names
+    """
+    if target_col is None:
+        # Try to identify target column
+        for col_name in ['price', 'Price', 'PRICE', 'target', 'Target']:
+            if col_name in df.columns:
+                target_col = col_name
+                break
+        if target_col is None:
+            target_col = df.columns[-1]
+    
+    return [col for col in df.columns if col != target_col]

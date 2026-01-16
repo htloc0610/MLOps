@@ -1,113 +1,130 @@
-from kfp.v2.dsl import (
-    Dataset,
-    Input,
-    Model,
-    Output,
-    Metrics,
-    component,
-)
+"""
+Training Module - Local Version
 
-# Docker image from Artifact Registry
-BASE_IMAGE = "us-central1-docker.pkg.dev/project-1cd612d2-3ea2-4818-a72/mlops-repo/training-image:latest"
+This module handles model training using scikit-learn Random Forest.
+No Google Cloud or KFP dependencies required.
+"""
 
-@component(
-    base_image=BASE_IMAGE,
-    output_component_file="training.yaml"
-)
+import numpy as np
+import logging
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+from typing import Dict, Any
+
+logger = logging.getLogger(__name__)
+
+
 def training(
-    preprocessed_dataset: Input[Dataset],
-    model: Output[Model],
-    metrics: Output[Metrics],
-    hyperparameters: dict
-):
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    hyperparameters: Dict[str, Any] = None
+) -> RandomForestRegressor:
     """
-    Trains the model on the preprocessed dataset.
+    Train a Random Forest Regressor model.
     
     Args:
-        preprocessed_dataset: Input preprocessed dataset
-        model: Output artifact for the trained model
-        metrics: Output artifact for training metrics
-        hyperparameters: Dictionary of hyperparameters
+        X_train: Training features (scaled)
+        y_train: Training target values
+        hyperparameters: Dictionary of model hyperparameters
+            - n_estimators: Number of trees (default: 100)
+            - max_depth: Maximum tree depth (default: 10)
+            - random_state: Random seed (default: 42)
+            - min_samples_split: Minimum samples to split (default: 2)
+            - min_samples_leaf: Minimum samples per leaf (default: 1)
+            
+    Returns:
+        Trained RandomForestRegressor model
+        
+    Raises:
+        Exception: If training fails
     """
-    import pandas as pd
-    import joblib
-    from sklearn.model_selection import train_test_split
-    from sklearn.ensemble import RandomForestRegressor
-    from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
-    import logging
-    import json
-    
     try:
-        logging.info("Starting model training...")
+        logger.info("Starting model training...")
         
-        # Load preprocessed dataset
-        df = pd.read_csv(preprocessed_dataset.path)
-        logging.info(f"Loaded preprocessed dataset with shape: {df.shape}")
+        # Default hyperparameters
+        if hyperparameters is None:
+            hyperparameters = {}
         
-        # Split features and target
-        # Assuming the target column is 'price' or 'Price' or the last column
-        if 'price' in df.columns:
-            target_col = 'price'
-        elif 'Price' in df.columns:
-            target_col = 'Price'
-        else:
-            target_col = df.columns[-1]
-            logging.warning(f"Using '{target_col}' as target column")
+        params = {
+            'n_estimators': hyperparameters.get('n_estimators', 100),
+            'max_depth': hyperparameters.get('max_depth', 10),
+            'random_state': hyperparameters.get('random_state', 42),
+            'min_samples_split': hyperparameters.get('min_samples_split', 2),
+            'min_samples_leaf': hyperparameters.get('min_samples_leaf', 1),
+            'n_jobs': -1,  # Use all CPU cores
+            'verbose': 0
+        }
         
-        X = df.drop(columns=[target_col])
-        y = df[target_col]
+        logger.info(f"Training Random Forest with parameters:")
+        for key, value in params.items():
+            logger.info(f"  {key}: {value}")
         
-        logging.info(f"Features shape: {X.shape}, Target shape: {y.shape}")
+        # Initialize model
+        model = RandomForestRegressor(**params)
         
-        # Split into train and validation sets
-        X_train, X_val, y_train, y_val = train_test_split(
-            X, y, 
-            test_size=0.2, 
-            random_state=hyperparameters.get('random_state', 42)
-        )
+        # Train model
+        logger.info(f"Training on {X_train.shape[0]} samples with {X_train.shape[1]} features...")
+        model.fit(X_train, y_train)
         
-        logging.info(f"Train set size: {X_train.shape[0]}, Validation set size: {X_val.shape[0]}")
-        
-        # Initialize and train the model
-        rf_model = RandomForestRegressor(
-            n_estimators=hyperparameters.get('n_estimators', 100),
-            max_depth=hyperparameters.get('max_depth', 10),
-            random_state=hyperparameters.get('random_state', 42),
-            n_jobs=-1
-        )
-        
-        logging.info(f"Training Random Forest with hyperparameters: {hyperparameters}")
-        rf_model.fit(X_train, y_train)
-        
-        # Make predictions
-        y_train_pred = rf_model.predict(X_train)
-        y_val_pred = rf_model.predict(X_val)
-        
-        # Calculate metrics
+        # Calculate training metrics
+        y_train_pred = model.predict(X_train)
         train_mse = mean_squared_error(y_train, y_train_pred)
-        train_r2 = r2_score(y_train, y_train_pred)
+        train_rmse = np.sqrt(train_mse)
         train_mae = mean_absolute_error(y_train, y_train_pred)
+        train_r2 = r2_score(y_train, y_train_pred)
         
-        val_mse = mean_squared_error(y_val, y_val_pred)
-        val_r2 = r2_score(y_val, y_val_pred)
-        val_mae = mean_absolute_error(y_val, y_val_pred)
+        logger.info("Training metrics:")
+        logger.info(f"  MSE:  {train_mse:,.2f}")
+        logger.info(f"  RMSE: {train_rmse:,.2f}")
+        logger.info(f"  MAE:  {train_mae:,.2f}")
+        logger.info(f"  R²:   {train_r2:.4f}")
         
-        # Log metrics
-        metrics.log_metric("train_mse", train_mse)
-        metrics.log_metric("train_r2", train_r2)
-        metrics.log_metric("train_mae", train_mae)
-        metrics.log_metric("validation_mse", val_mse)
-        metrics.log_metric("validation_r2", val_r2)
-        metrics.log_metric("validation_mae", val_mae)
+        # Model info
+        logger.info(f"Model trained with {len(model.estimators_)} trees")
         
-        # Save the model
-        joblib.dump(rf_model, model.path)
+        logger.info("✓ Model training completed successfully!")
         
-        logging.info(f"Model saved to: {model.path}")
-        logging.info(f"Training Metrics - MSE: {train_mse:.2f}, R2: {train_r2:.4f}, MAE: {train_mae:.2f}")
-        logging.info(f"Validation Metrics - MSE: {val_mse:.2f}, R2: {val_r2:.4f}, MAE: {val_mae:.2f}")
-        logging.info("Model training completed successfully!")
+        return model
         
     except Exception as e:
-        logging.error(f"Error during training: {str(e)}")
+        logger.error(f"Error during training: {str(e)}")
         raise
+
+
+def get_feature_importance(
+    model: RandomForestRegressor,
+    feature_names: list = None,
+    top_n: int = 10
+) -> Dict[str, float]:
+    """
+    Get feature importance from trained model.
+    
+    Args:
+        model: Trained RandomForestRegressor
+        feature_names: List of feature names (optional)
+        top_n: Number of top features to return
+        
+    Returns:
+        Dictionary of feature names and their importance scores
+    """
+    try:
+        importances = model.feature_importances_
+        
+        if feature_names is None:
+            feature_names = [f"feature_{i}" for i in range(len(importances))]
+        
+        # Create feature importance dictionary
+        feature_importance = dict(zip(feature_names, importances))
+        
+        # Sort by importance and get top N
+        sorted_features = sorted(
+            feature_importance.items(), 
+            key=lambda x: x[1], 
+            reverse=True
+        )[:top_n]
+        
+        return dict(sorted_features)
+        
+    except Exception as e:
+        logger.error(f"Error getting feature importance: {str(e)}")
+        return {}

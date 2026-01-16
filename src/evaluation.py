@@ -1,243 +1,246 @@
-from kfp.v2.dsl import (
-    Dataset,
-    Input,
-    Model,
-    Output,
-    Metrics,
-    HTML,
-    component,
-)
+"""
+Evaluation Module - Local Version
 
-# Docker image from Artifact Registry
-BASE_IMAGE = "us-central1-docker.pkg.dev/project-1cd612d2-3ea2-4818-a72/mlops-repo/training-image:latest"
+This module handles model evaluation and visualization.
+No Google Cloud or KFP dependencies required.
+"""
 
-@component(
-    base_image=BASE_IMAGE,
-    output_component_file="evaluation.yaml"
-)
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import logging
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+from sklearn.ensemble import RandomForestRegressor
+from pathlib import Path
+from typing import Dict, Any, Optional
+import json
+
+logger = logging.getLogger(__name__)
+
+# Set matplotlib style
+plt.style.use('seaborn-v0_8-darkgrid')
+sns.set_palette("husl")
+
+
 def evaluation(
-    model: Input[Model],
-    preprocessed_dataset: Input[Dataset],
-    metrics: Output[Metrics],
-    html: Output[HTML]
-):
+    model: RandomForestRegressor,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    output_dir: Path = None,
+    feature_names: list = None
+) -> Dict[str, float]:
     """
-    Evaluates the model's performance and generates visualizations.
+    Evaluate the trained model and generate visualizations.
     
     Args:
-        model: Input trained model
-        preprocessed_dataset: Input preprocessed dataset
-        metrics: Output artifact for evaluation metrics
-        html: Output artifact for visualization HTML
+        model: Trained model
+        X_test: Test features
+        y_test: Test target values
+        output_dir: Directory to save plots (optional)
+        feature_names: List of feature names for importance plot (optional)
+        
+    Returns:
+        Dictionary containing evaluation metrics
+        
+    Raises:
+        Exception: If evaluation fails
     """
-    import pandas as pd
-    import joblib
-    import matplotlib
-    matplotlib.use('Agg')  # Use non-interactive backend
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-    from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
-    from sklearn.model_selection import train_test_split
-    import logging
-    import base64
-    from io import BytesIO
-    
     try:
-        logging.info("Starting model evaluation...")
-        
-        # Load the model and dataset
-        rf_model = joblib.load(model.path)
-        df = pd.read_csv(preprocessed_dataset.path)
-        
-        logging.info(f"Loaded model and dataset with shape: {df.shape}")
-        
-        # Split features and target (same as training)
-        if 'price' in df.columns:
-            target_col = 'price'
-        elif 'Price' in df.columns:
-            target_col = 'Price'
-        else:
-            target_col = df.columns[-1]
-        
-        X = df.drop(columns=[target_col])
-        y = df[target_col]
-        
-        # Use the same split as training for consistency
-        _, X_test, _, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42
-        )
+        logger.info("Starting model evaluation...")
         
         # Make predictions
-        y_pred = rf_model.predict(X_test)
+        logger.info(f"Predicting on {X_test.shape[0]} test samples...")
+        y_pred = model.predict(X_test)
         
         # Calculate metrics
         mse = mean_squared_error(y_test, y_pred)
-        r2 = r2_score(y_test, y_pred)
+        rmse = np.sqrt(mse)
         mae = mean_absolute_error(y_test, y_pred)
-        rmse = mse ** 0.5
+        r2 = r2_score(y_test, y_pred)
+        
+        # Mean Absolute Percentage Error (MAPE)
+        mape = np.mean(np.abs((y_test - y_pred) / y_test)) * 100
+        
+        metrics = {
+            'mse': float(mse),
+            'rmse': float(rmse),
+            'mae': float(mae),
+            'r2_score': float(r2),
+            'mape': float(mape)
+        }
         
         # Log metrics
-        metrics.log_metric("test_mse", mse)
-        metrics.log_metric("test_r2", r2)
-        metrics.log_metric("test_mae", mae)
-        metrics.log_metric("test_rmse", rmse)
+        logger.info("=" * 70)
+        logger.info("EVALUATION METRICS")
+        logger.info("=" * 70)
+        logger.info(f"  Mean Squared Error (MSE):       {mse:,.2f}")
+        logger.info(f"  Root Mean Squared Error (RMSE): {rmse:,.2f}")
+        logger.info(f"  Mean Absolute Error (MAE):      {mae:,.2f}")
+        logger.info(f"  R² Score:                       {r2:.4f}")
+        logger.info(f"  MAPE:                           {mape:.2f}%")
+        logger.info("=" * 70)
         
-        logging.info(f"Evaluation Metrics - MSE: {mse:.2f}, R2: {r2:.4f}, MAE: {mae:.2f}, RMSE: {rmse:.2f}")
+        # Generate visualizations if output directory is provided
+        if output_dir:
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            logger.info(f"Generating visualizations in {output_dir}...")
+            
+            # Create evaluation plots
+            create_evaluation_plots(
+                y_test, y_pred, model, 
+                feature_names, output_dir
+            )
         
-        # Create visualizations
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        logger.info("✓ Model evaluation completed successfully!")
         
-        # 1. Actual vs Predicted
-        axes[0, 0].scatter(y_test, y_pred, alpha=0.5)
-        axes[0, 0].plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', lw=2)
-        axes[0, 0].set_xlabel('Actual Price')
-        axes[0, 0].set_ylabel('Predicted Price')
-        axes[0, 0].set_title('Actual vs Predicted Prices')
-        axes[0, 0].grid(True, alpha=0.3)
+        return metrics
         
-        # 2. Residuals plot
+    except Exception as e:
+        logger.error(f"Error during evaluation: {str(e)}")
+        raise
+
+
+def create_evaluation_plots(
+    y_test: np.ndarray,
+    y_pred: np.ndarray,
+    model: RandomForestRegressor,
+    feature_names: list = None,
+    output_dir: Path = None
+):
+    """
+    Create comprehensive evaluation plots.
+    
+    Args:
+        y_test: Actual test values
+        y_pred: Predicted values
+        model: Trained model
+        feature_names: List of feature names
+        output_dir: Directory to save plots
+    """
+    try:
+        # Create figure with subplots
+        fig = plt.figure(figsize=(16, 12))
+        
+        # 1. Actual vs Predicted scatter plot
+        ax1 = plt.subplot(2, 2, 1)
+        ax1.scatter(y_test, y_pred, alpha=0.5, edgecolors='k', linewidth=0.5)
+        
+        # Perfect prediction line
+        min_val = min(y_test.min(), y_pred.min())
+        max_val = max(y_test.max(), y_pred.max())
+        ax1.plot([min_val, max_val], [min_val, max_val], 'r--', lw=2, label='Perfect Prediction')
+        
+        ax1.set_xlabel('Actual Values', fontsize=12, fontweight='bold')
+        ax1.set_ylabel('Predicted Values', fontsize=12, fontweight='bold')
+        ax1.set_title('Actual vs Predicted Values', fontsize=14, fontweight='bold')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # 2. Residual plot
+        ax2 = plt.subplot(2, 2, 2)
         residuals = y_test - y_pred
-        axes[0, 1].scatter(y_pred, residuals, alpha=0.5)
-        axes[0, 1].axhline(y=0, color='r', linestyle='--', lw=2)
-        axes[0, 1].set_xlabel('Predicted Price')
-        axes[0, 1].set_ylabel('Residuals')
-        axes[0, 1].set_title('Residual Plot')
-        axes[0, 1].grid(True, alpha=0.3)
+        ax2.scatter(y_pred, residuals, alpha=0.5, edgecolors='k', linewidth=0.5)
+        ax2.axhline(y=0, color='r', linestyle='--', lw=2)
+        ax2.set_xlabel('Predicted Values', fontsize=12, fontweight='bold')
+        ax2.set_ylabel('Residuals', fontsize=12, fontweight='bold')
+        ax2.set_title('Residual Plot', fontsize=14, fontweight='bold')
+        ax2.grid(True, alpha=0.3)
         
-        # 3. Feature importance
-        feature_importance = pd.DataFrame({
-            'feature': X.columns,
-            'importance': rf_model.feature_importances_
-        }).sort_values('importance', ascending=False).head(10)
-        
-        axes[1, 0].barh(feature_importance['feature'], feature_importance['importance'])
-        axes[1, 0].set_xlabel('Importance')
-        axes[1, 0].set_title('Top 10 Feature Importances')
-        axes[1, 0].invert_yaxis()
+        # 3. Feature importance (if available)
+        ax3 = plt.subplot(2, 2, 3)
+        if hasattr(model, 'feature_importances_'):
+            importances = model.feature_importances_
+            
+            if feature_names is None:
+                feature_names = [f'Feature {i}' for i in range(len(importances))]
+            
+            # Get top 10 features
+            indices = np.argsort(importances)[-10:]
+            
+            ax3.barh(range(len(indices)), importances[indices], align='center')
+            ax3.set_yticks(range(len(indices)))
+            ax3.set_yticklabels([feature_names[i] for i in indices])
+            ax3.set_xlabel('Importance', fontsize=12, fontweight='bold')
+            ax3.set_title('Top 10 Feature Importances', fontsize=14, fontweight='bold')
+            ax3.grid(True, alpha=0.3, axis='x')
+        else:
+            ax3.text(0.5, 0.5, 'Feature importance not available', 
+                    ha='center', va='center', fontsize=12)
+            ax3.axis('off')
         
         # 4. Residuals distribution
-        axes[1, 1].hist(residuals, bins=50, edgecolor='black', alpha=0.7)
-        axes[1, 1].set_xlabel('Residuals')
-        axes[1, 1].set_ylabel('Frequency')
-        axes[1, 1].set_title('Distribution of Residuals')
-        axes[1, 1].axvline(x=0, color='r', linestyle='--', lw=2)
-        axes[1, 1].grid(True, alpha=0.3)
+        ax4 = plt.subplot(2, 2, 4)
+        ax4.hist(residuals, bins=50, edgecolor='black', alpha=0.7, color='skyblue')
+        ax4.axvline(x=0, color='r', linestyle='--', lw=2, label='Zero Error')
+        ax4.set_xlabel('Residuals', fontsize=12, fontweight='bold')
+        ax4.set_ylabel('Frequency', fontsize=12, fontweight='bold')
+        ax4.set_title('Distribution of Residuals', fontsize=14, fontweight='bold')
+        ax4.legend()
+        ax4.grid(True, alpha=0.3, axis='y')
         
         plt.tight_layout()
         
-        # Save plot to base64 string
-        buffer = BytesIO()
-        plt.savefig(buffer, format='png', dpi=100, bbox_inches='tight')
-        buffer.seek(0)
-        image_base64 = base64.b64encode(buffer.read()).decode()
+        # Save plot
+        if output_dir:
+            plot_path = output_dir / 'evaluation_plots.png'
+            plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+            logger.info(f"✓ Plots saved to {plot_path}")
+        
         plt.close()
         
-        # Create HTML report
-        html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Model Evaluation Report</title>
-            <style>
-                body {{
-                    font-family: Arial, sans-serif;
-                    margin: 20px;
-                    background-color: #f5f5f5;
-                }}
-                .container {{
-                    max-width: 1200px;
-                    margin: 0 auto;
-                    background-color: white;
-                    padding: 30px;
-                    border-radius: 10px;
-                    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-                }}
-                h1 {{
-                    color: #333;
-                    border-bottom: 3px solid #4285f4;
-                    padding-bottom: 10px;
-                }}
-                h2 {{
-                    color: #555;
-                    margin-top: 30px;
-                }}
-                .metrics {{
-                    display: grid;
-                    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                    gap: 20px;
-                    margin: 20px 0;
-                }}
-                .metric-card {{
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                    color: white;
-                    padding: 20px;
-                    border-radius: 8px;
-                    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-                }}
-                .metric-label {{
-                    font-size: 14px;
-                    opacity: 0.9;
-                    margin-bottom: 5px;
-                }}
-                .metric-value {{
-                    font-size: 28px;
-                    font-weight: bold;
-                }}
-                img {{
-                    max-width: 100%;
-                    height: auto;
-                    border-radius: 8px;
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-                }}
-                .timestamp {{
-                    color: #888;
-                    font-size: 12px;
-                    margin-top: 20px;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>🏠 House Price Prediction - Model Evaluation Report</h1>
-                
-                <h2>Performance Metrics</h2>
-                <div class="metrics">
-                    <div class="metric-card">
-                        <div class="metric-label">R² Score</div>
-                        <div class="metric-value">{r2:.4f}</div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Mean Squared Error</div>
-                        <div class="metric-value">{mse:.2f}</div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Root Mean Squared Error</div>
-                        <div class="metric-value">{rmse:.2f}</div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Mean Absolute Error</div>
-                        <div class="metric-value">{mae:.2f}</div>
-                    </div>
-                </div>
-                
-                <h2>Visualizations</h2>
-                <img src="data:image/png;base64,{image_base64}" alt="Model Evaluation Plots">
-                
-                <div class="timestamp">
-                    Report generated by Vertex AI Pipeline
-                </div>
-            </div>
-        </body>
-        </html>
-        """
+    except Exception as e:
+        logger.error(f"Error creating plots: {str(e)}")
+        plt.close()
+
+
+def save_predictions(
+    y_test: np.ndarray,
+    y_pred: np.ndarray,
+    output_path: Path
+):
+    """
+    Save predictions to CSV file.
+    
+    Args:
+        y_test: Actual values
+        y_pred: Predicted values
+        output_path: Path to save CSV file
+    """
+    try:
+        predictions_df = pd.DataFrame({
+            'actual': y_test,
+            'predicted': y_pred,
+            'error': y_test - y_pred,
+            'absolute_error': np.abs(y_test - y_pred),
+            'percentage_error': np.abs((y_test - y_pred) / y_test) * 100
+        })
         
-        # Save HTML report
-        with open(html.path, 'w') as f:
-            f.write(html_content)
-        
-        logging.info(f"Evaluation report saved to: {html.path}")
-        logging.info("Model evaluation completed successfully!")
+        predictions_df.to_csv(output_path, index=False)
+        logger.info(f"✓ Predictions saved to {output_path}")
         
     except Exception as e:
-        logging.error(f"Error during evaluation: {str(e)}")
-        raise
+        logger.error(f"Error saving predictions: {str(e)}")
+
+
+def save_metrics(
+    metrics: Dict[str, float],
+    output_path: Path
+):
+    """
+    Save metrics to JSON file.
+    
+    Args:
+        metrics: Dictionary of metrics
+        output_path: Path to save JSON file
+    """
+    try:
+        with open(output_path, 'w') as f:
+            json.dump(metrics, f, indent=2)
+        
+        logger.info(f"✓ Metrics saved to {output_path}")
+        
+    except Exception as e:
+        logger.error(f"Error saving metrics: {str(e)}")

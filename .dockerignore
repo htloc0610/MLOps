@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Output directories
+output/
+*.pkl
+*.json
+*.csv
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Documentation
+*.md
+!README.md
+
+# Misc
+.DS_Store
+*.log
+.env.example
+houseprice_pipeline.yaml
+
+# Keep only necessary files
+!requirements.txt
+!run_pipeline.py
+!src/
+!data/

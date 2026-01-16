@@ -1,208 +1,215 @@
 """
-Vertex AI Pipeline for House Price Prediction
+Local Pipeline Runner for House Price Prediction
 
-This script defines and runs a complete ML pipeline on Google Cloud Vertex AI.
-The pipeline includes data ingestion, preprocessing, training, and evaluation.
+This script runs the ML pipeline locally using modular components.
+All components run sequentially on your local machine.
 
 Before running:
-1. Copy .env.example to .env and configure your GCP project details
-2. Build and push the Docker image to Artifact Registry
-3. Upload the Housing.csv dataset to your GCS bucket
-4. Ensure you have proper IAM permissions configured
+1. Place Housing.csv in the data/ directory
+2. Install requirements: pip install -r requirements.txt
+3. Run: python run_pipeline.py
 """
 
 import os
+import sys
+import logging
+import pickle
 from pathlib import Path
-from dotenv import load_dotenv
-from kfp.v2 import compiler
-from google.cloud import aiplatform
-from kfp.v2.dsl import pipeline
+from datetime import datetime
+import json
 
-# Import component functions
+# Import local pipeline components
 from src.data_ingestion import data_ingestion
-from src.preprocessing import preprocessing
-from src.training import training
-from src.evaluation import evaluation
+from src.preprocessing import preprocessing, get_feature_names
+from src.training import training, get_feature_importance
+from src.evaluation import evaluation, save_predictions, save_metrics
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # ============================================================================
-# LOAD CONFIGURATION FROM .env FILE
+# CONFIGURATION
 # ============================================================================
 
-# Load environment variables from .env file
-env_path = Path(__file__).parent / '.env'
-load_dotenv(dotenv_path=env_path)
+# Local paths
+DATA_DIR = Path("data")
+OUTPUT_DIR = Path("output")
+MODELS_DIR = OUTPUT_DIR / "models"
+METRICS_DIR = OUTPUT_DIR / "metrics"
+ARTIFACTS_DIR = OUTPUT_DIR / "artifacts"
+PLOTS_DIR = OUTPUT_DIR / "plots"
 
-# GCP Project Configuration
-PROJECT_ID = os.getenv('PROJECT_ID')
-REGION = os.getenv('REGION')
-BUCKET_NAME = os.getenv('BUCKET_NAME')
-PIPELINE_ROOT_FOLDER = os.getenv('PIPELINE_ROOT_FOLDER', 'pipeline_root_houseprice')
-
-# Artifact Registry Configuration
-REPOSITORY = os.getenv('REPOSITORY')
-IMAGE_NAME = os.getenv('IMAGE_NAME')
-IMAGE_TAG = os.getenv('IMAGE_TAG', 'latest')
-
-# Dataset Configuration
-DATA_PATH = os.getenv('DATA_PATH', 'data/Housing.csv')
+# Dataset configuration
+DATA_FILE = "Housing.csv"
+DATA_PATH = DATA_DIR / DATA_FILE
 
 # Hyperparameters
 N_ESTIMATORS = int(os.getenv('N_ESTIMATORS', '100'))
 MAX_DEPTH = int(os.getenv('MAX_DEPTH', '10'))
 RANDOM_STATE = int(os.getenv('RANDOM_STATE', '42'))
-
-# Construct paths
-PIPELINE_ROOT = f"gs://{BUCKET_NAME}/{PIPELINE_ROOT_FOLDER}"
-BASE_IMAGE = f"{REGION}-docker.pkg.dev/{PROJECT_ID}/{REPOSITORY}/{IMAGE_NAME}:{IMAGE_TAG}"
+TEST_SIZE = float(os.getenv('TEST_SIZE', '0.2'))
 
 # ============================================================================
-# PIPELINE DEFINITION
+# HELPER FUNCTIONS
 # ============================================================================
 
-@pipeline(
-    name="houseprice-pipeline",
-    description="End-to-end pipeline for house price prediction",
-    pipeline_root=PIPELINE_ROOT
-)
-def houseprice_pipeline(
-    bucket_name: str = BUCKET_NAME,
-    data_path: str = DATA_PATH
-):
-    """
-    Defines the complete ML pipeline workflow.
-    
-    Pipeline steps:
-    1. Data Ingestion: Load dataset from GCS
-    2. Preprocessing: Clean and transform data
-    3. Training: Train RandomForest model
-    4. Evaluation: Evaluate model and generate report
-    
-    Args:
-        bucket_name: GCS bucket containing the dataset
-        data_path: Path to the dataset file within the bucket
-    """
-    
-    # Step 1: Data Ingestion
-    ingestion_task = data_ingestion(
-        bucket_name=bucket_name,
-        data_path=data_path
-    ).set_cpu_limit('500m').set_memory_limit('2G')
-    
-    # Step 2: Preprocessing
-    preprocessing_task = preprocessing(
-        input_dataset=ingestion_task.outputs["dataset"]
-    ).set_cpu_limit('500m').set_memory_limit('2G')
-    
-    # Step 3: Model Training
-    training_task = training(
-        preprocessed_dataset=preprocessing_task.outputs["preprocessed_dataset"],
-        hyperparameters={
-            "n_estimators": N_ESTIMATORS,
-            "max_depth": MAX_DEPTH,
-            "random_state": RANDOM_STATE
-        }
-    ).set_cpu_limit('500m').set_memory_limit('2G')
-    
-    # Step 4: Model Evaluation
-    evaluation_task = evaluation(
-        model=training_task.outputs["model"],
-        preprocessed_dataset=preprocessing_task.outputs["preprocessed_dataset"]
-    ).set_cpu_limit('500m').set_memory_limit('2G')
+def setup_directories():
+    """Create necessary directories for output."""
+    directories = [DATA_DIR, OUTPUT_DIR, MODELS_DIR, METRICS_DIR, ARTIFACTS_DIR, PLOTS_DIR]
+    for directory in directories:
+        directory.mkdir(parents=True, exist_ok=True)
+    logger.info(f"✓ Output directories created at {OUTPUT_DIR.absolute()}")
 
 # ============================================================================
-# PIPELINE COMPILATION AND EXECUTION
+# MAIN PIPELINE EXECUTION
 # ============================================================================
 
-def run_pipeline():
-    """Initialize Vertex AI and submit the pipeline job."""
-    import yaml
-    import os
+def run_local_pipeline():
+    """Run the complete ML pipeline locally using modular components."""
     
-    print(f"Initializing Vertex AI (Project: {PROJECT_ID}, Region: {REGION})...")
-    aiplatform.init(project=PROJECT_ID, location=REGION)
+    logger.info("\n" + "=" * 70)
+    logger.info("LOCAL ML PIPELINE - HOUSE PRICE PREDICTION")
+    logger.info("=" * 70)
+    logger.info(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Working directory: {Path.cwd()}")
+    logger.info("=" * 70)
     
-    # Define output spec path - SWITCH TO YAML
-    pipeline_spec_path = 'houseprice_pipeline.yaml'
-    
-    # 1. CLEANUP: Delete old file
-    if os.path.exists(pipeline_spec_path):
-        os.remove(pipeline_spec_path)
-        print(f"Removed old {pipeline_spec_path}")
-
-    # 2. COMPILE
-    print("Compiling pipeline to YAML...")
-    compiler.Compiler().compile(
-        pipeline_func=houseprice_pipeline,
-        package_path=pipeline_spec_path
-    )
-    
-    # Check if file exists
-    if not os.path.exists(pipeline_spec_path):
-        raise RuntimeError(f"Pipeline compilation failed to create {pipeline_spec_path}")
+    try:
+        # Setup
+        setup_directories()
         
-    print(f"✓ Pipeline compiled successfully to {pipeline_spec_path}")
-
-    # 3. SUBMIT
-    print("Creating and submitting pipeline job...")
-    
-    job = aiplatform.PipelineJob(
-        display_name="houseprice-pipeline-job",
-        template_path=pipeline_spec_path,
-        pipeline_root=PIPELINE_ROOT,
-        parameter_values={
-            'bucket_name': BUCKET_NAME,
-            'data_path': DATA_PATH
-        },
-        enable_caching=False,
-        project=PROJECT_ID,
-        location=REGION
-    )
-    
-    print("\nSubmitting pipeline to Vertex AI...")
-    job.submit(service_account=None)
-    
-    print("\n✓ Pipeline submitted successfully!")
-    print(f"Pipeline name: {job.display_name}")
-    print(f"View results at: {PIPELINE_ROOT}")
+        # ====================================================================
+        # STEP 1: DATA INGESTION
+        # ====================================================================
+        logger.info("\n" + "=" * 70)
+        logger.info("STEP 1: DATA INGESTION")
+        logger.info("=" * 70)
+        
+        df = data_ingestion(str(DATA_PATH))
+        
+        # ====================================================================
+        # STEP 2: PREPROCESSING
+        # ====================================================================
+        logger.info("\n" + "=" * 70)
+        logger.info("STEP 2: PREPROCESSING")
+        logger.info("=" * 70)
+        
+        # Get feature names before preprocessing
+        feature_names = get_feature_names(df)
+        
+        X_train, X_test, y_train, y_test, scaler = preprocessing(
+            df,
+            test_size=TEST_SIZE,
+            random_state=RANDOM_STATE
+        )
+        
+        # Save scaler
+        scaler_path = ARTIFACTS_DIR / "scaler.pkl"
+        with open(scaler_path, 'wb') as f:
+            pickle.dump(scaler, f)
+        logger.info(f"✓ Scaler saved to {scaler_path}")
+        
+        # ====================================================================
+        # STEP 3: MODEL TRAINING
+        # ====================================================================
+        logger.info("\n" + "=" * 70)
+        logger.info("STEP 3: MODEL TRAINING")
+        logger.info("=" * 70)
+        
+        hyperparameters = {
+            'n_estimators': N_ESTIMATORS,
+            'max_depth': MAX_DEPTH,
+            'random_state': RANDOM_STATE
+        }
+        
+        model = training(X_train, y_train, hyperparameters)
+        
+        # Save model
+        model_path = MODELS_DIR / "model.pkl"
+        with open(model_path, 'wb') as f:
+            pickle.dump(model, f)
+        logger.info(f"✓ Model saved to {model_path}")
+        
+        # Save feature importance
+        feature_importance = get_feature_importance(model, feature_names, top_n=10)
+        importance_path = ARTIFACTS_DIR / "feature_importance.json"
+        with open(importance_path, 'w') as f:
+            json.dump(feature_importance, f, indent=2)
+        logger.info(f"✓ Feature importance saved to {importance_path}")
+        
+        # ====================================================================
+        # STEP 4: MODEL EVALUATION
+        # ====================================================================
+        logger.info("\n" + "=" * 70)
+        logger.info("STEP 4: MODEL EVALUATION")
+        logger.info("=" * 70)
+        
+        metrics = evaluation(
+            model,
+            X_test,
+            y_test,
+            output_dir=PLOTS_DIR,
+            feature_names=feature_names
+        )
+        
+        # Save metrics
+        metrics_path = METRICS_DIR / f"metrics_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        save_metrics(metrics, metrics_path)
+        
+        # Save predictions
+        predictions_path = ARTIFACTS_DIR / "predictions.csv"
+        save_predictions(y_test, model.predict(X_test), predictions_path)
+        
+        # ====================================================================
+        # SUMMARY
+        # ====================================================================
+        logger.info("\n" + "=" * 70)
+        logger.info("✓✓✓ PIPELINE COMPLETED SUCCESSFULLY! ✓✓✓")
+        logger.info("=" * 70)
+        logger.info(f"End time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"\nResults saved to: {OUTPUT_DIR.absolute()}")
+        logger.info(f"\nGenerated files:")
+        logger.info(f"  📦 Model:      {model_path.resolve().relative_to(Path.cwd())}")
+        logger.info(f"  📊 Metrics:    {metrics_path.resolve().relative_to(Path.cwd())}")
+        logger.info(f"  📈 Plots:      {(PLOTS_DIR / 'evaluation_plots.png').resolve().relative_to(Path.cwd())}")
+        logger.info(f"  📋 Predictions: {predictions_path.resolve().relative_to(Path.cwd())}")
+        logger.info(f"  🔧 Scaler:     {scaler_path.resolve().relative_to(Path.cwd())}")
+        logger.info(f"  ⭐ Feature Importance: {importance_path.resolve().relative_to(Path.cwd())}")
+        logger.info("\nKey Metrics:")
+        logger.info(f"  R² Score: {metrics['r2_score']:.4f}")
+        logger.info(f"  RMSE:     {metrics['rmse']:,.2f}")
+        logger.info(f"  MAE:      {metrics['mae']:,.2f}")
+        logger.info("=" * 70 + "\n")
+        
+        return True
+        
+    except Exception as e:
+        logger.error("\n" + "=" * 70)
+        logger.error("❌❌❌ PIPELINE FAILED ❌❌❌")
+        logger.error("=" * 70)
+        logger.error(f"Error: {str(e)}")
+        logger.error("=" * 70 + "\n")
+        import traceback
+        traceback.print_exc()
+        return False
 
 # ============================================================================
-# MAIN EXECUTION
+# ENTRY POINT
 # ============================================================================
 
 if __name__ == "__main__":
-    import sys
-    
-    # Validate that environment variables are loaded
-    required_vars = {
-        'PROJECT_ID': PROJECT_ID,
-        'REGION': REGION,
-        'BUCKET_NAME': BUCKET_NAME,
-        'REPOSITORY': REPOSITORY,
-        'IMAGE_NAME': IMAGE_NAME
-    }
-    
-    missing_vars = [var for var, value in required_vars.items() if not value]
-    
-    if missing_vars:
-        print("❌ ERROR: Missing required environment variables in .env file:")
-        for var in missing_vars:
-            print(f"   - {var}")
-        print("\nPlease ensure .env file exists and contains all required variables.")
-        print("You can copy .env.example to .env and update the values.")
+    # Check if dataset exists
+    if not DATA_PATH.exists():
+        logger.error(f"\n❌ ERROR: Dataset not found at {DATA_PATH.absolute()}")
+        logger.error(f"\nPlease ensure {DATA_FILE} is placed in the {DATA_DIR} directory.")
+        logger.error(f"Expected path: {DATA_PATH.absolute()}")
+        logger.error(f"\nTip: Run 'python download_dataset.py' to get a sample dataset\n")
         sys.exit(1)
     
-    print("=" * 70)
-    print("VERTEX AI PIPELINE - HOUSE PRICE PREDICTION")
-    print("=" * 70)
-    print(f"\nConfiguration:")
-    print(f"  Project ID: {PROJECT_ID}")
-    print(f"  Region: {REGION}")
-    print(f"  Bucket: {BUCKET_NAME}")
-    print(f"  Pipeline Root: {PIPELINE_ROOT}")
-    print(f"  Base Image: {BASE_IMAGE}")
-    print(f"  Dataset: gs://{BUCKET_NAME}/{DATA_PATH}")
-    print("\n" + "=" * 70 + "\n")
-    
-    # Run the pipeline (compilation is handled internally)
-    print("\nStarting pipeline execution...")
-    run_pipeline()
+    # Run pipeline
+    success = run_local_pipeline()
+    sys.exit(0 if success else 1)

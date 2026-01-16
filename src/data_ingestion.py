@@ -1,50 +1,55 @@
-from kfp.v2.dsl import (
-    Dataset,
-    Output,
-    component,
-)
+"""
+Data Ingestion Module - Local Version
 
-# Docker image from Artifact Registry
-# Format: {REGION}-docker.pkg.dev/{PROJECT_ID}/{REPOSITORY}/{IMAGE_NAME}:{IMAGE_TAG}
-BASE_IMAGE = "us-central1-docker.pkg.dev/project-1cd612d2-3ea2-4818-a72/mlops-repo/training-image:latest"
+This module handles loading the housing dataset from local filesystem.
+No Google Cloud dependencies required.
+"""
 
-@component(
-    base_image=BASE_IMAGE,
-    output_component_file="data_ingestion.yaml"
-)
-def data_ingestion(
-    dataset: Output[Dataset],
-    bucket_name: str,
-    data_path: str = "data/Housing.csv"
-):
+import pandas as pd
+import logging
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+def data_ingestion(data_path: str) -> pd.DataFrame:
     """
-    Loads and prepares the house price dataset.
+    Load dataset from local file system.
     
     Args:
-        dataset: Output artifact to store the prepared dataset
-        bucket_name: GCS bucket name where the dataset is stored
-        data_path: Path to the dataset file within the bucket
+        data_path: Path to the dataset file (local path or file path)
+        
+    Returns:
+        DataFrame containing the loaded dataset
+        
+    Raises:
+        FileNotFoundError: If the dataset file doesn't exist
+        Exception: For other data loading errors
     """
-    import pandas as pd
-    import logging
-    
     try:
-        logging.info("Starting data ingestion...")
+        logger.info("Starting data ingestion...")
+        logger.info(f"Loading dataset from {data_path}...")
         
-        # Load the dataset from the GCS bucket
-        gcs_path = f"gs://{bucket_name}/{data_path}"
-        logging.info(f"Loading dataset from {gcs_path}...")
-        df = pd.read_csv(gcs_path)
+        # Check if file exists
+        if not Path(data_path).exists():
+            raise FileNotFoundError(f"Dataset not found at {data_path}")
         
-        logging.info(f"Dataset loaded successfully. Shape: {df.shape}")
-        logging.info(f"Columns: {df.columns.tolist()}")
+        # Load the dataset
+        df = pd.read_csv(data_path)
         
-        # Save the dataset to the output artifact
-        logging.info(f"Saving dataset to {dataset.path}...")
-        df.to_csv(dataset.path, index=False)
+        logger.info(f"✓ Dataset loaded successfully!")
+        logger.info(f"  Shape: {df.shape}")
+        logger.info(f"  Columns: {df.columns.tolist()}")
+        logger.info(f"  Memory usage: {df.memory_usage(deep=True).sum() / 1024**2:.2f} MB")
         
-        logging.info("Data ingestion completed successfully!")
+        # Basic data validation
+        if df.empty:
+            raise ValueError("Loaded dataset is empty!")
+        
+        logger.info("Data ingestion completed successfully!")
+        
+        return df
         
     except Exception as e:
-        logging.error(f"Error during data ingestion: {str(e)}")
+        logger.error(f"Error during data ingestion: {str(e)}")
         raise
